@@ -52,6 +52,7 @@ DISPLAY_COLUMNS = [
     "首单日期",
     "末单日期",
 ]
+COMPUTED_COST_STATUSES = {"已计算", "售后配件估算成本"}
 
 
 class SortableTableItem(QTableWidgetItem):
@@ -406,10 +407,11 @@ class MainWindow(QMainWindow):
 
             if has_cost_columns:
                 statuses = {str(v) for v in group["成本状态"] if str(v)}
-                computed_group = group[group["成本状态"] == "已计算"].copy()
+                computed_group = group[group["成本状态"].isin(COMPUTED_COST_STATUSES)].copy()
                 has_computed = not computed_group.empty
                 has_missing = "成本缺失" in statuses
                 has_abnormal = bool(statuses.intersection({"成本冲突", "大板规格异常"}))
+                has_estimated = "售后配件估算成本" in statuses
 
                 if has_computed:
                     row["成本金额"] = pd.to_numeric(computed_group["成本金额"], errors="coerce").sum()
@@ -424,10 +426,14 @@ class MainWindow(QMainWindow):
                     row["原定毛利率"] = pd.NA
                     row["实际毛利率"] = pd.NA
 
-                if has_computed and (has_missing or has_abnormal):
+                if has_estimated and not has_missing and not has_abnormal and statuses.issubset(COMPUTED_COST_STATUSES):
+                    row["成本状态"] = "售后配件估算成本"
+                elif has_computed and (has_missing or has_abnormal):
                     status_parts = ["部分成本缺失" if has_missing else "部分成本异常"]
                     if has_missing and has_abnormal:
                         status_parts.append("部分成本异常")
+                    if has_estimated:
+                        status_parts.append("含售后配件估算成本")
                     row["成本状态"] = "、".join(status_parts)
                 elif has_computed:
                     row["成本状态"] = "已计算"

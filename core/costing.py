@@ -8,6 +8,8 @@ from core.analyzer import AnalysisError, HONEYCOMB_CATEGORIES
 
 COST_REQUIRED_COLUMNS = ["商品名称", "营销类别", "成本", "毛利率（%）", "规格"]
 EXCLUDED_MARGIN_RANK_CATEGORIES = {"包装费用", "促销礼品"}
+AFTER_SALES_PARTS_CATEGORY = "售后配件"
+ESTIMATED_COST_STATUS = "售后配件估算成本"
 BOARD_ALIAS_MAP = {
     "D-FW48G (封边白)": "D-FW48G-4 (封边白)",
     "D-FW48G (封边黑)": "D-FW48G-4 (封边黑)",
@@ -38,6 +40,19 @@ def apply_costing(detail: pd.DataFrame, cost_path: str | Path) -> tuple[pd.DataF
 
         cost_item = cost_lookup.get(match_name)
         if cost_item is None:
+            if row["营销分类"] == AFTER_SALES_PARTS_CATEGORY:
+                quantity = float(row["已发数量"])
+                unit_price = float(row["单价"])
+                amount = float(row["金额"])
+                cost_amount = quantity * unit_price * 0.9
+                profit = amount - cost_amount
+                df.at[idx, "单位成本"] = unit_price * 0.9
+                df.at[idx, "成本金额"] = cost_amount
+                df.at[idx, "毛利额"] = profit
+                df.at[idx, "实际毛利率"] = profit / amount if amount else pd.NA
+                df.at[idx, "原定毛利率"] = pd.NA
+                df.at[idx, "成本状态"] = ESTIMATED_COST_STATUS
+                continue
             df.at[idx, "成本状态"] = "成本缺失"
             continue
 
@@ -60,7 +75,7 @@ def apply_costing(detail: pd.DataFrame, cost_path: str | Path) -> tuple[pd.DataF
         df.at[idx, "原定毛利率"] = float(cost_item["原定毛利率"]) / 100
         df.at[idx, "成本状态"] = "已计算"
 
-    computed = df[df["成本状态"] == "已计算"].copy()
+    computed = df[df["成本状态"].isin(["已计算", ESTIMATED_COST_STATUS])].copy()
     missing = df[df["成本状态"] == "成本缺失"].copy()
     abnormal = df[df["成本状态"].isin(["成本冲突", "大板规格异常"])].copy()
 
