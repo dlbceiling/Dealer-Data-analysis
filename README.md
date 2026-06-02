@@ -24,20 +24,25 @@ dealer_analysis/
 
 ## 运行方式
 
-1. 安装 Python 3.14，并勾选 `Add python.exe to PATH`。
+1. 安装 Python 3.14。
 2. 进入本目录。
 3. 双击 `run_app.bat`。
+
+`run_app.bat` 会自动：
+
+- 优先使用默认安装路径 `C:\Users\Administrator\AppData\Local\Programs\Python\Python314\python.exe`
+- 如果默认路径不存在，再尝试调用 `PATH` 里的 `python`
+- 首次运行时自动创建 `.venv`
+- 自动安装依赖并启动程序
 
 也可以在命令行运行：
 
 ```bat
-"%LOCALAPPDATA%\Programs\Python\Python314\python.exe" -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-python main.py
+cd /d 项目目录
+run_app.bat
 ```
 
-如果已经把 Python 加入 PATH，也可以使用：
+如果需要手动启动，也可以使用：
 
 ```bat
 python -m venv .venv
