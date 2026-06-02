@@ -21,7 +21,10 @@ REQUIRED_COLUMNS = [
 HEATER_CATEGORY_CODES = {"A", "X", "Z", "T", "S", "J", "G", "D+", "C"}
 APPLIANCE_EXTRA_CATEGORIES = {"凉霸"}
 HONEYCOMB_CATEGORIES = {"7mm大板", "9mm大板"}
-SIZE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*\*\s*(\d+(?:\.\d+)?)\s*$")
+SIZE_PATTERN = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*[×xX*]\s*(\d+(?:\.\d+)?)\s*$")
+THREE_PART_SIZE_PATTERN = re.compile(
+    r"^\s*(\d+(?:\.\d+)?)\s*[×xX*]\s*(\d+(?:\.\d+)?)\s*[×xX*]\s*(\d+(?:\.\d+)?)\s*$"
+)
 MODEL_SPLIT_PATTERN = re.compile(r"[（(]")
 PRODUCT_REMARK_SPLIT_PATTERN = re.compile(r"[（(]")
 SERIES_SUFFIX = "系列"
@@ -58,8 +61,15 @@ def _is_heater_category(value: object) -> bool:
 
 
 def _parse_area(size: object, quantity: float) -> float:
-    """尺寸格式为 数字*数字 时，按毫米面积换算平方米。"""
-    match = SIZE_PATTERN.match("" if pd.isna(size) else str(size))
+    """尺寸格式为 两段式或三段式时，按毫米面积换算平方米。"""
+    text = "" if pd.isna(size) else str(size)
+    three_part_match = THREE_PART_SIZE_PATTERN.match(text)
+    if three_part_match:
+        width = float(three_part_match.group(2))
+        length = float(three_part_match.group(3))
+        return width * length / 1_000_000 * quantity
+
+    match = SIZE_PATTERN.match(text)
     if not match:
         return 0.0
 

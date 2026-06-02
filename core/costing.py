@@ -22,7 +22,7 @@ BOARD_THREE_PART_SPEC_PATTERN = re.compile(
 
 def apply_costing(detail: pd.DataFrame, cost_path: str | Path) -> tuple[pd.DataFrame, dict[str, pd.DataFrame | float | int]]:
     """为清洗后明细补充成本、毛利和异常信息。"""
-    cost_lookup, duplicate_conflicts = _build_cost_lookup(cost_path)
+    cost_lookup, duplicate_conflicts, board_spec_lookup, board_spec_conflicts = _build_cost_lookup(cost_path)
     df = detail.copy()
     df["成本匹配商品名称"] = df["商品名称"].apply(_cost_match_name)
     df["单位成本"] = pd.NA
@@ -34,11 +34,21 @@ def apply_costing(detail: pd.DataFrame, cost_path: str | Path) -> tuple[pd.DataF
 
     for idx, row in df.iterrows():
         match_name = row["成本匹配商品名称"]
-        if match_name in duplicate_conflicts:
-            df.at[idx, "成本状态"] = "成本冲突"
-            continue
+        cost_item = None
+        is_whole_board = row["是否蜂窝板"] and _is_whole_board_product(row["商品名称"])
+        if is_whole_board:
+            sales_spec_key = _normalize_board_spec(row["尺寸"])
+            board_lookup_key = (match_name, sales_spec_key)
+            if board_lookup_key in board_spec_conflicts:
+                df.at[idx, "成本状态"] = "成本冲突"
+                continue
+            cost_item = board_spec_lookup.get(board_lookup_key)
+        else:
+            if match_name in duplicate_conflicts:
+                df.at[idx, "成本状态"] = "成本冲突"
+                continue
+            cost_item = cost_lookup.get(match_name)
 
-        cost_item = cost_lookup.get(match_name)
         if cost_item is None:
             if row["营销分类"] == AFTER_SALES_PARTS_CATEGORY:
                 quantity = float(row["已发数量"])
@@ -102,7 +112,14 @@ def apply_costing(detail: pd.DataFrame, cost_path: str | Path) -> tuple[pd.DataF
     return df, stats
 
 
-def _build_cost_lookup(cost_path: str | Path) -> tuple[dict[str, dict[str, float]], set[str]]:
+def _build_cost_lookup(
+    cost_path: str | Path,
+) -> tuple[
+    dict[str, dict[str, float]],
+    set[str],
+    dict[tuple[str, str], dict[str, float]],
+    set[tuple[str, str]],
+]:
     try:
         raw = pd.read_excel(cost_path, engine="openpyxl")
     except Exception as exc:
@@ -136,6 +153,8 @@ def _build_cost_lookup(cost_path: str | Path) -> tuple[dict[str, dict[str, float
     normalized = pd.DataFrame(rows)
     lookup: dict[str, dict[str, float]] = {}
     duplicate_conflicts: set[str] = set()
+    board_spec_lookup: dict[tuple[str, str], dict[str, float]] = {}
+    board_spec_conflicts: set[tuple[str, str]] = set()
 
     for product, group in normalized.groupby("商品名称"):
         comparable = group.copy()
@@ -148,7 +167,28 @@ def _build_cost_lookup(cost_path: str | Path) -> tuple[dict[str, dict[str, float
             continue
         lookup[product] = group.iloc[0].to_dict()
 
-    return lookup, duplicate_conflicts
+    board_rows = cost[cost["营销类别"].isin(HONEYCOMB_CATEGORIES)].copy()
+    board_rows = board_rows[board_rows["商品名称"].apply(_is_whole_board_product)].copy()
+    if not board_rows.empty:
+        board_rows["规格键"] = board_rows["规格"].apply(_normalize_board_spec)
+        for (product, spec_key), group in board_rows.groupby(["商品名称", "规格键"]):
+            comparable = group.copy()
+            comparable["成本"] = pd.to_numeric(comparable["成本"], errors="coerce").round(6)
+            comparable["毛利率（%）"] = pd.to_numeric(comparable["毛利率（%）"], errors="coerce").round(6)
+            unique_values = comparable.drop_duplicates(["成本", "毛利率（%）", "规格"])
+            key = (product, spec_key)
+            if len(unique_values) > 1:
+                board_spec_conflicts.add(key)
+                continue
+            row = group.iloc[0]
+            board_spec_lookup[key] = {
+                "商品名称": row["商品名称"],
+                "单位成本": float(row["成本"]),
+                "大板单㎡成本": _board_unit_cost(row["成本"], row["规格"]),
+                "原定毛利率": float(row["毛利率（%）"]),
+            }
+
+    return lookup, duplicate_conflicts, board_spec_lookup, board_spec_conflicts
 
 
 def _cost_match_name(product_name: object) -> str:
@@ -176,6 +216,33 @@ def _board_unit_cost(cost: float, spec: str) -> float | pd.NA:
         return float(cost) / area if area else pd.NA
 
     return pd.NA
+
+
+def _normalize_board_spec(spec: object) -> str:
+    text = "" if pd.isna(spec) else str(spec).strip()
+    if not text:
+        return ""
+    if text.lower() == "custom":
+        return "custom"
+
+    three_part = BOARD_THREE_PART_SPEC_PATTERN.search(text)
+    if three_part:
+        width = int(float(three_part.group(2)))
+        length = int(float(three_part.group(3)))
+        return f"{width}×{length}"
+
+    two_part = BOARD_SPEC_PATTERN.search(text)
+    if two_part:
+        width = int(float(two_part.group(1)))
+        length = int(float(two_part.group(2)))
+        return f"{width}×{length}"
+
+    return text
+
+
+def _is_whole_board_product(product_name: object) -> bool:
+    text = "" if pd.isna(product_name) else str(product_name).strip()
+    return text.endswith("(修边)") or text.endswith("（修边）")
 
 
 def _category_margin(computed: pd.DataFrame) -> pd.DataFrame:
