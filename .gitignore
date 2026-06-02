@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build outputs
+build/
+dist/
+*.spec
+
+# Installer / runtime logs
+*.log
+
+# Local caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Qt / WebEngine temporary files
+QtWebEngine/
+
+# Local analysis/debug exports
+_*.csv
+_*.xlsx
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
