@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
-from charts.plotly_charts import build_chart_html, build_report_html
+from charts.plotly_charts import build_chart_html
 from core.analyzer import AnalysisError, analyze_excel
 from core.models import AnalysisResult
 from export.excel_exporter import export_analysis_result
@@ -95,8 +95,6 @@ class MainWindow(QMainWindow):
         self.filtered_detail = pd.DataFrame()
         self.web_temp_dir = Path(tempfile.gettempdir()) / "dealer_analysis"
         self.web_temp_dir.mkdir(exist_ok=True)
-        self.pdf_view = QWebEngineView()
-        self.pdf_view.hide()
         self.settings = QSettings("DealerAnalysis", "DealerAnalysisAssistant")
         self.cost_file = self._load_default_cost_file()
 
@@ -107,11 +105,8 @@ class MainWindow(QMainWindow):
     def _build_actions(self) -> None:
         export_action = QAction("导出分析结果", self)
         export_action.triggered.connect(self.export_excel)
-        print_action = QAction("打印报告 / 导出 PDF", self)
-        print_action.triggered.connect(self.export_pdf)
         self.toolbar = self.addToolBar("工具")
         self.toolbar.addAction(export_action)
-        self.toolbar.addAction(print_action)
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -144,9 +139,6 @@ class MainWindow(QMainWindow):
         self.export_button = QPushButton("导出分析结果")
         self.export_button.clicked.connect(self.export_excel)
         self.export_button.setEnabled(False)
-        self.print_button = QPushButton("打印报告")
-        self.print_button.clicked.connect(self.export_pdf)
-        self.print_button.setEnabled(False)
 
         file_layout.addWidget(self.choose_button)
         file_layout.addWidget(self.file_label, 1)
@@ -154,7 +146,6 @@ class MainWindow(QMainWindow):
         file_layout.addWidget(self.cost_file_label, 1)
         file_layout.addWidget(self.analyze_button)
         file_layout.addWidget(self.export_button)
-        file_layout.addWidget(self.print_button)
         main_layout.addWidget(file_bar)
 
         self.tabs = QTabWidget()
@@ -325,7 +316,6 @@ class MainWindow(QMainWindow):
 
         self.tabs.setVisible(True)
         self.export_button.setEnabled(True)
-        self.print_button.setEnabled(True)
         self.dealer_label.setText(
             f"经销商：{self.result.dealer_name}\n"
             f"统计周期：{self._period_text()}"
@@ -399,28 +389,60 @@ class MainWindow(QMainWindow):
         if df.empty:
             return pd.DataFrame(columns=DISPLAY_COLUMNS)
 
-        agg_map = {
-            "营销分类": ("营销分类", lambda x: "、".join(sorted({str(v) for v in x if str(v)}))),
-            "单位": ("单位", lambda x: "、".join(sorted({str(v) for v in x if str(v)}))),
-            "已发数量": ("已发数量", "sum"),
-            "金额": ("金额", "sum"),
-            "面积㎡": ("面积㎡", "sum"),
-            "首单日期": ("单据日期", "min"),
-            "末单日期": ("单据日期", "max"),
-        }
-        if "成本金额" in df.columns:
-            agg_map["成本金额"] = ("成本金额", lambda x: pd.to_numeric(x, errors="coerce").sum())
-            agg_map["毛利额"] = ("毛利额", lambda x: pd.to_numeric(x, errors="coerce").sum())
-            agg_map["单位成本"] = ("单位成本", lambda x: pd.to_numeric(x, errors="coerce").mean())
-            agg_map["原定毛利率"] = ("原定毛利率", lambda x: pd.to_numeric(x, errors="coerce").mean())
-            agg_map["成本状态"] = ("成本状态", lambda x: "、".join(sorted({str(v) for v in x if str(v)})))
+        rows = []
+        has_cost_columns = "成本金额" in df.columns
 
-        summary = df.groupby("商品名称", as_index=False).agg(**agg_map)
-        if "毛利额" in summary.columns:
-            summary["实际毛利率"] = summary.apply(
-                lambda row: row["毛利额"] / row["金额"] if row["金额"] else pd.NA,
-                axis=1,
-            )
+        for product_name, group in df.groupby("商品名称", sort=False):
+            row = {
+                "商品名称": product_name,
+                "营销分类": "、".join(sorted({str(v) for v in group["营销分类"] if str(v)})),
+                "单位": "、".join(sorted({str(v) for v in group["单位"] if str(v)})),
+                "已发数量": group["已发数量"].sum(),
+                "金额": group["金额"].sum(),
+                "面积㎡": group["面积㎡"].sum(),
+                "首单日期": group["单据日期"].min(),
+                "末单日期": group["单据日期"].max(),
+            }
+
+            if has_cost_columns:
+                statuses = {str(v) for v in group["成本状态"] if str(v)}
+                computed_group = group[group["成本状态"] == "已计算"].copy()
+                has_computed = not computed_group.empty
+                has_missing = "成本缺失" in statuses
+                has_abnormal = bool(statuses.intersection({"成本冲突", "大板规格异常"}))
+
+                if has_computed:
+                    row["成本金额"] = pd.to_numeric(computed_group["成本金额"], errors="coerce").sum()
+                    row["毛利额"] = pd.to_numeric(computed_group["毛利额"], errors="coerce").sum()
+                    row["单位成本"] = pd.to_numeric(computed_group["单位成本"], errors="coerce").mean()
+                    row["原定毛利率"] = pd.to_numeric(computed_group["原定毛利率"], errors="coerce").mean()
+                    row["实际毛利率"] = row["毛利额"] / row["金额"] if row["金额"] else pd.NA
+                else:
+                    row["成本金额"] = pd.NA
+                    row["毛利额"] = pd.NA
+                    row["单位成本"] = pd.NA
+                    row["原定毛利率"] = pd.NA
+                    row["实际毛利率"] = pd.NA
+
+                if has_computed and (has_missing or has_abnormal):
+                    status_parts = ["部分成本缺失" if has_missing else "部分成本异常"]
+                    if has_missing and has_abnormal:
+                        status_parts.append("部分成本异常")
+                    row["成本状态"] = "、".join(status_parts)
+                elif has_computed:
+                    row["成本状态"] = "已计算"
+                elif has_missing and has_abnormal:
+                    row["成本状态"] = "不可计算（成本缺失、成本异常）"
+                elif has_missing:
+                    row["成本状态"] = "不可计算（成本缺失）"
+                elif has_abnormal:
+                    row["成本状态"] = "不可计算（成本异常）"
+                else:
+                    row["成本状态"] = ""
+
+            rows.append(row)
+
+        summary = pd.DataFrame(rows)
         return summary.sort_values("金额", ascending=False).reset_index(drop=True)
 
     def export_excel(self) -> None:
@@ -436,33 +458,6 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "导出完成", f"已导出：\n{output_path}")
         except Exception as exc:
             QMessageBox.critical(self, "导出失败", f"导出 Excel 失败：{exc}")
-
-    def export_pdf(self) -> None:
-        if self.result is None:
-            QMessageBox.information(self, "提示", "请先完成分析。")
-            return
-        default_name = f"{self.result.dealer_name}_分析报告.pdf"
-        output_path, _ = QFileDialog.getSaveFileName(self, "导出PDF报告", default_name, "PDF 文件 (*.pdf)")
-        if not output_path:
-            return
-        try:
-            self.pdf_view.loadFinished.disconnect()
-        except (RuntimeError, TypeError):
-            pass
-
-        def print_after_loaded(ok: bool) -> None:
-            try:
-                self.pdf_view.loadFinished.disconnect(print_after_loaded)
-            except (RuntimeError, TypeError):
-                pass
-            if not ok:
-                QMessageBox.critical(self, "导出失败", "PDF 报告页面生成失败。")
-                return
-            self.pdf_view.page().printToPdf(output_path)
-            QMessageBox.information(self, "导出PDF", f"PDF 导出任务已提交：\n{output_path}")
-
-        self.pdf_view.loadFinished.connect(print_after_loaded)
-        self._load_html(self.pdf_view, build_report_html(self.result), "report.html")
 
     def _load_html(self, view: QWebEngineView, html: str, file_name: str) -> None:
         html_path = self.web_temp_dir / file_name
@@ -482,7 +477,8 @@ class MainWindow(QMainWindow):
                 item = SortableTableItem(self._format_cell(row[column], column))
                 if column in {"已发数量", "单价", "金额", "面积㎡", "单位成本", "成本金额", "毛利额", "实际毛利率", "原定毛利率"}:
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    item.setData(Qt.UserRole, float(row[column]) if pd.notna(row[column]) else 0.0)
+                    if isinstance(row[column], (int, float)) and pd.notna(row[column]):
+                        item.setData(Qt.UserRole, float(row[column]))
                 self.detail_table.setItem(row_idx, col_idx, item)
 
         self.detail_table.resizeColumnsToContents()
@@ -555,6 +551,8 @@ class MainWindow(QMainWindow):
 
     def _format_cell(self, value, column: str) -> str:
         if pd.isna(value):
+            if column in {"成本金额", "毛利额", "实际毛利率"}:
+                return "不可计算"
             return ""
         if column in {"金额", "单价", "销售金额", "成本金额", "毛利额", "单位成本"}:
             return fmt_money(float(value))

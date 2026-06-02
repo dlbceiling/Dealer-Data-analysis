@@ -112,6 +112,16 @@ def analyze_excel(file_path: str | Path, cost_path: str | Path | None = None) ->
     df["单据日期"] = pd.to_datetime(df["单据日期"], errors="coerce")
     df["营销分类_匹配"] = df["营销分类"].apply(_normalize_category)
 
+    dealer_values = [name for name in df["经销商名称"].unique().tolist() if name]
+    if len(dealer_values) > 1:
+        preview = "\n".join(f"- {name}" for name in dealer_values[:5])
+        if len(dealer_values) > 5:
+            preview += f"\n- 其他 {len(dealer_values) - 5} 个经销商"
+        raise AnalysisError(
+            "当前文件包含多个经销商，请先导出单个经销商数据后再分析。\n\n"
+            f"检测到的经销商：\n{preview}"
+        )
+
     df = df[df["商品名称"] != ""].copy()
     if df.empty:
         raise AnalysisError("没有找到有效的商品数据，请检查“商品名称”列。")
@@ -137,7 +147,6 @@ def analyze_excel(file_path: str | Path, cost_path: str | Path | None = None) ->
         for size, qty, is_honeycomb in zip(df["尺寸"], df["已发数量"], df["是否蜂窝板"])
     ]
 
-    dealer_values = [name for name in df["经销商名称"].unique().tolist() if name]
     dealer_name = dealer_values[0] if dealer_values else "未填写"
     valid_dates = df["单据日期"].dropna()
     period_start = valid_dates.min() if not valid_dates.empty else None
