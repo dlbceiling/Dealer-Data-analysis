@@ -13,6 +13,11 @@ ESTIMATED_COST_STATUS = "售后配件估算成本"
 BOARD_ALIAS_MAP = {
     "D-FW48G (封边白)": "D-FW48G-4 (封边白)",
     "D-FW48G (封边黑)": "D-FW48G-4 (封边黑)",
+    "D-FW48G (修边)": "D-FW48G-04 (修边)",
+}
+WHOLE_BOARD_SPEC_FALLBACKS = {
+    "1220×3000": "1220×2440",
+    "1220×3600": "1220×2440",
 }
 BOARD_SPEC_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*[×xX*]\s*(\d+(?:\.\d+)?)")
 BOARD_THREE_PART_SPEC_PATTERN = re.compile(
@@ -43,6 +48,14 @@ def apply_costing(detail: pd.DataFrame, cost_path: str | Path) -> tuple[pd.DataF
                 df.at[idx, "成本状态"] = "成本冲突"
                 continue
             cost_item = board_spec_lookup.get(board_lookup_key)
+            if cost_item is None:
+                fallback_spec_key = _whole_board_spec_fallback(sales_spec_key)
+                if fallback_spec_key:
+                    fallback_lookup_key = (match_name, fallback_spec_key)
+                    if fallback_lookup_key in board_spec_conflicts:
+                        df.at[idx, "成本状态"] = "成本冲突"
+                        continue
+                    cost_item = board_spec_lookup.get(fallback_lookup_key)
         else:
             if match_name in duplicate_conflicts:
                 df.at[idx, "成本状态"] = "成本冲突"
@@ -243,6 +256,10 @@ def _normalize_board_spec(spec: object) -> str:
 def _is_whole_board_product(product_name: object) -> bool:
     text = "" if pd.isna(product_name) else str(product_name).strip()
     return text.endswith("(修边)") or text.endswith("（修边）")
+
+
+def _whole_board_spec_fallback(spec_key: str) -> str:
+    return WHOLE_BOARD_SPEC_FALLBACKS.get(spec_key, "")
 
 
 def _category_margin(computed: pd.DataFrame) -> pd.DataFrame:
