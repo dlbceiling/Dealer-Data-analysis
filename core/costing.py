@@ -10,6 +10,7 @@ COST_REQUIRED_COLUMNS = ["商品名称", "营销类别", "成本", "毛利率（
 EXCLUDED_MARGIN_RANK_CATEGORIES = {"包装费用", "促销礼品"}
 AFTER_SALES_PARTS_CATEGORY = "售后配件"
 ESTIMATED_COST_STATUS = "售后配件估算成本"
+MAX_UNIT_BOARD_COST_PRODUCTS = {"D-FW06G-KY-9 (不修边)"}
 BOARD_ALIAS_MAP = {
     "D-FW48G (封边白)": "D-FW48G-4 (封边白)",
     "D-FW48G (封边黑)": "D-FW48G-4 (封边黑)",
@@ -176,6 +177,12 @@ def _build_cost_lookup(
         comparable["原定毛利率"] = comparable["原定毛利率"].round(6)
         unique_values = comparable.drop_duplicates(["单位成本", "大板单㎡成本", "原定毛利率"])
         if len(unique_values) > 1:
+            if product in MAX_UNIT_BOARD_COST_PRODUCTS:
+                ranked_group = group.copy()
+                ranked_group["大板单㎡成本"] = ranked_group["大板单㎡成本"].astype("Float64")
+                ranked_group = ranked_group.sort_values("大板单㎡成本", ascending=False, na_position="last")
+                lookup[product] = ranked_group.iloc[0].to_dict()
+                continue
             duplicate_conflicts.add(product)
             continue
         lookup[product] = group.iloc[0].to_dict()
